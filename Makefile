@@ -85,7 +85,7 @@ ifeq ($(FLUIDSYNTH),1)
 	CFLAGS+=-DHAS_FLUIDSYNTH
 endif
 
-_X16_OBJS = cpu/fake6502.o memory.o disasm.o video.o i2c.o smc.o rtc.o via.o serial.o ieee.o vera_spi.o audio.o vera_pcm.o vera_psg.o sdcard.o main.o debugger.o javascript_interface.o joystick.o rendertext.o keyboard.o icon.o timing.o wav_recorder.o testbench.o files.o cartridge.o iso_8859_15.o ymglue.o midi.o
+_X16_OBJS = cpu/fake6502.o memory.o disasm.o video.o i2c.o smc.o rtc.o via.o serial.o ieee.o vera_spi.o audio.o vera_pcm.o vera_psg.o sdcard.o main.o debugger.o javascript_interface.o joystick.o rendertext.o keyboard.o icon.o timing.o wav_recorder.o testbench.o files.o cartridge.o iso_8859_15.o ymglue.o midi.o mcp_server.o keyboard_processor.o log.o logging.o x16_buffer.o utils.o
 _X16_OBJS += extern/ymfm/src/ymfm_opm.o
 
 ifdef TARGET_WIN32
@@ -101,7 +101,7 @@ MAKECART_OBJS = $(patsubst %,$(X16_ODIR)/%,$(_MAKECART_OBJS))
 MAKECART_DEPS := $(MAKECART_OBJS:.o=.d)
 
 .PHONY: all clean wasm
-all: x16emu makecart
+all: x16emu makecart mcp
 
 x16emu: $(X16_OBJS)
 	$(CXX) -o $(X16_OUTPUT) $(X16_OBJS) $(LDFLAGS) $(LDEMU)
@@ -121,6 +121,23 @@ $(MAKECART_ODIR)/%.o: $(MAKECART_SDIR)/%.c
 	@mkdir -p $$(dirname $@)
 	$(CC) $(CFLAGS) -c $< -MD -MT $@ -MF $(@:%o=%d) -o $@
 
+# MCP Server target
+ifdef TARGET_WIN32
+MCP_OUTPUT=mcp.exe
+else
+MCP_OUTPUT=mcp
+endif
+
+MCP_CXXFLAGS=-std=c++17 -O3 -Wall -Werror -Isrc/extern/include
+MCP_LDFLAGS=-pthread
+
+ifdef TARGET_WIN32
+MCP_LDFLAGS+=-lws2_32
+endif
+
+mcp: src/mcp.cpp
+	$(CXX) $(MCP_CXXFLAGS) src/mcp.cpp -o $(MCP_OUTPUT) $(MCP_LDFLAGS)
+
 cpu/tables.h cpu/mnemonics.h: cpu/buildtables.py cpu/6502.opcodes cpu/65c816.opcodes
 	cd cpu && python buildtables.py
 
@@ -135,7 +152,7 @@ wasm:
 	emmake make
 
 clean:
-	rm -rf $(X16_ODIR) $(MAKECART_ODIR) x16emu x16emu.exe x16emu.js x16emu.wasm x16emu.data x16emu.worker.js x16emu.html x16emu.html.mem makecart makecart.exe makecart.js makecart.wasm makecart.data makecart.worker.js makecart.html makecart.html.mem
+	rm -rf $(X16_ODIR) $(MAKECART_ODIR) x16emu x16emu.exe x16emu.js x16emu.wasm x16emu.data x16emu.worker.js x16emu.html x16emu.html.mem makecart makecart.exe makecart.js makecart.wasm makecart.data makecart.worker.js makecart.html makecart.html.mem mcp mcp.exe
 
 ifeq ($(filter $(MAKECMDGOALS), clean),)
 -include $(X16_DEPS)

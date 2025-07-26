@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <SDL.h>
 #include "glue.h"
+#include "x16_buffer.h"
 
 bool video_init(int window_scale, float screen_x_scale, char *quality, bool fullscreen, float opacity);
 void video_reset(void);
@@ -36,5 +37,9 @@ bool video_is_special_address(int addr);
 uint32_t video_get_address(uint8_t sel);
 uint32_t video_get_fx_accum(void);
 uint8_t video_get_dc_value(uint8_t reg);
+
+// Screenshot functionality for MCP
+bool video_take_screenshot(void);
+const char* get_last_screenshot_filename(void);
 
 #endif

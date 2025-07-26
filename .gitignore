@@ -29,3 +29,25 @@ makecart.js
 makecart.wasm
 makecart.worker.js
 test*.bin
+
+# MCP server binary and logs
+mcp
+mcp_server.log
+emulator_log.txt
+emulator_debug.log
+debug_output.log
+test_logging_output.txt
+
+# Build artifacts and temporary files
+-pthread
+
+# Log directories
+logs/
+
+# Test files and recordings
+test_*.gif
+test_*.png
+
+# Resources directory (screenshots, etc.)
+resources/
+

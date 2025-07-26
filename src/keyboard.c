@@ -1,9 +1,101 @@
 #include <SDL.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
+#include <stdlib.h>
 #include "glue.h"
 #include "i2c.h"
 #include "keyboard.h"
+
+// MCP keyboard input queue to prevent buffer overflow
+#define MCP_KEYBOARD_QUEUE_SIZE 4096
+static char mcp_keyboard_queue[MCP_KEYBOARD_QUEUE_SIZE];
+static int mcp_queue_head = 0;
+static int mcp_queue_tail = 0;
+static uint32_t last_key_inject_time = 0;
+static const uint32_t KEY_INJECT_DELAY_MS = 10; // 10ms between characters (100 chars/sec)
+
+// Check if MCP keyboard queue has data
+static bool mcp_keyboard_queue_has_data(void) {
+	return mcp_queue_head != mcp_queue_tail;
+}
+
+// Add text to MCP keyboard queue
+static bool mcp_keyboard_queue_add_text(const char* text) {
+	int text_len = strlen(text);
+	int available_space = (MCP_KEYBOARD_QUEUE_SIZE + mcp_queue_tail - mcp_queue_head - 1) % MCP_KEYBOARD_QUEUE_SIZE;
+	
+	if (text_len > available_space) {
+		return false; // Not enough space
+	}
+	
+	for (int i = 0; i < text_len; i++) {
+		mcp_keyboard_queue[mcp_queue_head] = text[i];
+		mcp_queue_head = (mcp_queue_head + 1) % MCP_KEYBOARD_QUEUE_SIZE;
+	}
+	
+	return true;
+}
+
+// Get next character from MCP keyboard queue
+static char mcp_keyboard_queue_get_next(void) {
+	if (mcp_queue_head == mcp_queue_tail) {
+		return 0; // Queue empty
+	}
+	
+	char c = mcp_keyboard_queue[mcp_queue_tail];
+	mcp_queue_tail = (mcp_queue_tail + 1) % MCP_KEYBOARD_QUEUE_SIZE;
+	return c;
+}
+
+// Process MCP keyboard queue with timing (call this from main loop)
+void keyboard_process_mcp_queue(void) {
+	if (!mcp_keyboard_queue_has_data()) {
+		return;
+	}
+	
+	uint32_t current_time = SDL_GetTicks();
+	if (current_time - last_key_inject_time < KEY_INJECT_DELAY_MS) {
+		return; // Too soon to inject next character
+	}
+	
+	// Check if keyboard buffer has space (leave some room)
+	extern uint8_t kbd_head, kbd_tail;
+	int kbd_used = (16 + kbd_head - kbd_tail) % 16;
+	if (kbd_used > 12) { // Don't fill more than 12/16 slots
+		return;
+	}
+	
+	char c = mcp_keyboard_queue_get_next();
+	if (c != 0) {
+		i2c_kbd_buffer_add((uint8_t)c);
+		last_key_inject_time = current_time;
+	}
+}
+
+// MCP server keyboard wrapper functions
+void keyboard_add_event(uint8_t key, bool pressed) {
+	if (pressed) {
+		i2c_kbd_buffer_add(key);
+	} else {
+		i2c_kbd_buffer_add(key | 0x80); // Set release bit
+	}
+}
+
+void keyboard_add_char(char c) {
+	// For single characters, add directly to avoid delay
+	i2c_kbd_buffer_add((uint8_t)c);
+}
+
+// Add text with proper queuing and timing
+bool keyboard_add_text(const char* text) {
+	return mcp_keyboard_queue_add_text(text);
+}
+
+// Get queue status
+int keyboard_get_queue_size(void) {
+	return (MCP_KEYBOARD_QUEUE_SIZE + mcp_queue_head - mcp_queue_tail) % MCP_KEYBOARD_QUEUE_SIZE;
+}
 
 #define EXTENDED_FLAG 0x100
 // #define ESC_IS_BREAK /* if enabled, Esc sends Break/Pause key instead of Esc */

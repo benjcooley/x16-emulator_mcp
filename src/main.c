@@ -43,6 +43,9 @@
 #include "testbench.h"
 #include "cartridge.h"
 #include "midi.h"
+#include "mcp_server.h"
+#include "keyboard.h"
+#include "logging.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -154,6 +157,31 @@ char *nvram_path = NULL;
 
 bool pwr_long_press=false;
 bool is_gen2 = false;
+
+// MCP Server configuration
+bool mcp_enabled = false;
+int mcp_port = 8080;
+bool mcp_debug = false;
+
+// Logging configuration
+char *log_file_path = NULL;
+char *log_level_str = NULL;
+
+// Emulator pause state
+static bool emulator_paused = false;
+
+// Pause/unpause functions for MCP server
+bool emulator_is_paused(void) {
+	return emulator_paused;
+}
+
+void emulator_pause(void) {
+	emulator_paused = true;
+}
+
+void emulator_unpause(void) {
+	emulator_paused = false;
+}
 
 #ifdef TRACE
 #include "rom_labels.h"
@@ -550,6 +578,10 @@ usage()
 	printf("\tPrint instruction trace. Optionally, a trigger address\n");
 	printf("\tcan be specified.\n");
 #endif
+	printf("-mcp [<port>] [debug]\n");
+	printf("\tEnable embedded MCP (Model Context Protocol) server.\n");
+	printf("\tOptional port number (default: 8080, range: 1024-65535).\n");
+	printf("\tAdd 'debug' for verbose MCP server logging.\n");
 	printf("-version\n");
 	printf("\tPrint additional version information of the emulator and ROM.\n");
 	printf("\n");
@@ -1145,6 +1177,44 @@ main(int argc, char **argv)
 			argc--;
 			argv++;
 			warn_rockwell = false;
+		} else if (!strcmp(argv[0], "-mcp")) {
+			argc--;
+			argv++;
+			mcp_enabled = true;
+			if (argc && argv[0][0] != '-') {
+				// Parse port number
+				mcp_port = (int)strtol(argv[0], NULL, 10);
+				if (mcp_port < 1024 || mcp_port > 65535) {
+					printf("-mcp port must be in the range of 1024-65535.\n");
+					exit(1);
+				}
+				argc--;
+				argv++;
+				// Check for debug flag
+				if (argc && !strcmp(argv[0], "debug")) {
+					mcp_debug = true;
+					argc--;
+					argv++;
+				}
+			}
+		} else if (!strcmp(argv[0], "-log-file")) {
+			argc--;
+			argv++;
+			if (!argc || argv[0][0] == '-') {
+				usage();
+			}
+			log_file_path = argv[0];
+			argc--;
+			argv++;
+		} else if (!strcmp(argv[0], "-log-level")) {
+			argc--;
+			argv++;
+			if (!argc || argv[0][0] == '-') {
+				usage();
+			}
+			log_level_str = argv[0];
+			argc--;
+			argv++;
 		} else {
 			usage();
 		}
@@ -1284,6 +1354,50 @@ main(int argc, char **argv)
 
 	timing_init();
 
+	// Initialize logging system
+	printf("X16 Emulator starting with logging enabled\n");
+	
+	// Log current working directory for debugging
+	char cwd[PATH_MAX];
+	if (getcwd(cwd, sizeof(cwd)) != NULL) {
+		printf("X16 Emulator current working directory: %s\n", cwd);
+	} else {
+		printf("X16 Emulator: Failed to get current working directory\n");
+	}
+	
+	// Use command line log file path or default
+	const char *log_file = log_file_path ? log_file_path : "logs/x16emu_log.txt";
+	x16_logging_set_file(log_file);
+	
+	// Set log level if specified
+	if (log_level_str) {
+		x16_log_level_t level = x16_parse_log_level(log_level_str);
+		x16_logging_set_level(level);
+		X16_LOG_INFO("Logging system initialized with file: %s, level: %s", log_file, log_level_str);
+		X16_LOG_INFO("X16 Emulator current working directory: %s", cwd);
+	} else {
+		X16_LOG_INFO("Logging system initialized with file: %s, default level", log_file);
+		X16_LOG_INFO("X16 Emulator current working directory: %s", cwd);
+	}
+	
+	// Initialize MCP server if enabled
+	if (mcp_enabled) {
+		if (mcp_server_init(mcp_port, mcp_debug)) {
+			if (mcp_server_start()) {
+				if (mcp_debug) {
+					printf("MCP Server: Successfully started on port %d\n", mcp_port);
+				}
+				X16_LOG_INFO("MCP Server started on port %d", mcp_port);
+			} else {
+				printf("MCP Server: Failed to start on port %d\n", mcp_port);
+				X16_LOG_ERROR("MCP Server failed to start on port %d", mcp_port);
+			}
+		} else {
+			printf("MCP Server: Failed to initialize\n");
+			X16_LOG_ERROR("MCP Server failed to initialize");
+		}
+	}
+
 	instruction_counter = 0;
 
 #ifdef __EMSCRIPTEN__
@@ -1299,6 +1413,11 @@ main(int argc, char **argv)
 }
 
 void main_shutdown() {
+	// Cleanup MCP server if it was enabled
+	if (mcp_enabled) {
+		mcp_server_cleanup();
+	}
+	
 	if (!headless){
 		wav_recorder_shutdown();
 		audio_close();
@@ -1585,6 +1704,13 @@ emulator_loop(void *param)
 {
 	uint32_t old_clockticks6502 = clockticks6502;
 	for (;;) {
+		// Check if emulator is paused
+		if (emulator_paused) {
+			// Sleep briefly to avoid busy waiting
+			SDL_Delay(10);
+			continue;
+		}
+		
 		if (smc_requested_reset) machine_reset();
 
 		if (testbench && regs.pc == 0xfffd){
@@ -1739,6 +1865,9 @@ emulator_loop(void *param)
 		}
 
 		midi_serial_step(clocks);
+
+		// Process MCP keyboard queue with timing
+		keyboard_process_mcp_queue();
 
 		if (!headless && new_frame) {
 			if (nvram_dirty && nvram_path) {

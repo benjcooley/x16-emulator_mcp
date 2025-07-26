@@ -17,10 +17,14 @@
 #include "sdcard.h"
 #include "i2c.h"
 #include "audio.h"
+#include "logging.h"
+#include "utils.h"
 
 #include <limits.h>
 #include <stdint.h>
 #include <time.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #ifdef __EMSCRIPTEN__
 #include "emscripten.h"
@@ -189,6 +193,7 @@ int frame_count = 0;
 static uint8_t framebuffer[SCREEN_WIDTH * SCREEN_HEIGHT * 4];
 #ifndef __EMSCRIPTEN__
 static uint8_t png_buffer[SCREEN_WIDTH * SCREEN_HEIGHT * 3];
+static char last_screenshot_filename[PATH_MAX] = {0};
 #endif
 
 static GifWriter gif_writer;
@@ -551,14 +556,54 @@ struct video_sprite_properties
 };
 
 #ifndef __EMSCRIPTEN__
-static void
-screenshot(void)
-{
-	char path[PATH_MAX];
-	const time_t now = time(NULL);
-	strftime(path, PATH_MAX, "x16emu-%Y-%m-%d-%H-%M-%S.png", localtime(&now));
 
-	memset(png_buffer, 0, SCREEN_WIDTH * SCREEN_HEIGHT * 3);
+bool
+video_take_screenshot(void)
+{
+	char base_path[PATH_MAX];
+	char full_dir_path[PATH_MAX];
+	char date_dir[PATH_MAX];
+	char filename[PATH_MAX];
+	char full_path[PATH_MAX];
+	
+	// Get SDL base path (where the executable is located)
+	char* sdl_base_path = SDL_GetBasePath();
+	if (!sdl_base_path) {
+		log_error("video_take_screenshot: Failed to get SDL base path");
+		return false;
+	}
+	
+	// Copy and clean up the base path
+	strncpy(base_path, sdl_base_path, PATH_MAX - 1);
+	base_path[PATH_MAX - 1] = '\0';
+	SDL_free(sdl_base_path);
+	
+	// Get current time with milliseconds
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	const time_t now = tv.tv_sec;
+	const int milliseconds = tv.tv_usec / 1000;
+	struct tm *tm_info = localtime(&now);
+	
+	// Create date-based directory path as absolute path using SDL base path
+	strftime(date_dir, PATH_MAX, "resources/screenshots/%Y-%m-%d", tm_info);
+	
+	// Create full directory path using absolute base path
+	snprintf(full_dir_path, PATH_MAX, "%s%s", base_path, date_dir);
+	
+	// Create the directory structure if it doesn't exist
+	if (create_directory_recursive(full_dir_path) != 0) {
+		log_error("video_take_screenshot: Failed to create directory: %s", full_dir_path);
+		return false;
+	}
+	
+	// Create filename with milliseconds
+	char base_filename[PATH_MAX];
+	strftime(base_filename, PATH_MAX, "x16emu-%Y-%m-%d-%H-%M-%S", tm_info);
+	snprintf(filename, PATH_MAX, "%s-%03d.png", base_filename, milliseconds);
+	
+	// Create full absolute path for screenshot file
+	snprintf(full_path, PATH_MAX, "%s/%s", full_dir_path, filename);
 
 	// The framebuffer stores pixels in BRGA but we want RGB:
 	for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
@@ -567,12 +612,36 @@ screenshot(void)
 		png_buffer[(i*3)+2] = framebuffer[(i*4)+0];
 	}
 
-	if (stbi_write_png(path, SCREEN_WIDTH, SCREEN_HEIGHT, 3, png_buffer, SCREEN_WIDTH*3)) {
-		printf("Wrote screenshot to %s\n", path);
+	log_info("video_take_screenshot: About to call stbi_write_png with absolute path: %s", full_path);
+	
+	int write_result = stbi_write_png(full_path, SCREEN_WIDTH, SCREEN_HEIGHT, 3, png_buffer, SCREEN_WIDTH*3);
+	log_info("video_take_screenshot: stbi_write_png returned: %d", write_result);
+	
+	if (write_result) {
+		printf("Wrote screenshot to %s\n", full_path);
+		
+		// Store the relative filename for later retrieval (for MCP resource URIs)
+		char date_str[32];
+		strftime(date_str, sizeof(date_str), "%Y-%m-%d", tm_info);
+		snprintf(last_screenshot_filename, PATH_MAX, "%s/%s", date_str, filename);
+		
+		log_info("video_take_screenshot: Success - relative filename: %s", last_screenshot_filename);
+		return true;
 	} else {
-		printf("WARNING: Couldn't write screenshot to %s\n", path);
+		log_error("video_take_screenshot: stbi_write_png failed for absolute path: %s", full_path);
+		return false;
 	}
 }
+
+const char*
+get_last_screenshot_filename(void)
+{
+	if (last_screenshot_filename[0] == '\0') {
+		return NULL;
+	}
+	return last_screenshot_filename;
+}
+
 #endif
 
 struct video_sprite_properties sprite_properties[128];
@@ -1413,7 +1482,16 @@ video_update()
 					consumed = true;
 #ifndef __EMSCRIPTEN__
 				} else if (event.key.keysym.sym == SDLK_p) {
-					screenshot();
+					if (video_take_screenshot()) {
+						const char* filename = get_last_screenshot_filename();
+						if (filename) {
+							printf("Screenshot saved: %s\n", filename);
+						} else {
+							printf("Screenshot taken but filename unavailable\n");
+						}
+					} else {
+						printf("Failed to take screenshot\n");
+					}
 					consumed = true;
 #endif
 				}
