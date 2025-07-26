@@ -43,7 +43,7 @@
 #include "testbench.h"
 #include "cartridge.h"
 #include "midi.h"
-#include "mcp_server.h"
+#include "mcp/mcp_server.h"
 #include "keyboard.h"
 #include "logging.h"
 
