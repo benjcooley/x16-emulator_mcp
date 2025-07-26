@@ -15,23 +15,42 @@ static int mcp_queue_tail = 0;
 static uint32_t last_key_inject_time = 0;
 static const uint32_t KEY_INJECT_DELAY_MS = 10; // 10ms between characters (100 chars/sec)
 
+// Forward declaration
+static uint8_t ascii_to_x16_keycode(char c);
+
 // Check if MCP keyboard queue has data
 static bool mcp_keyboard_queue_has_data(void) {
 	return mcp_queue_head != mcp_queue_tail;
 }
 
-// Add text to MCP keyboard queue
+// Add text to MCP keyboard queue with bounds checking
 static bool mcp_keyboard_queue_add_text(const char* text) {
+	if (!text) {
+		return false; // Null pointer check
+	}
+	
 	int text_len = strlen(text);
+	if (text_len == 0) {
+		return true; // Empty string is valid
+	}
+	
+	// Calculate available space with proper bounds checking
 	int available_space = (MCP_KEYBOARD_QUEUE_SIZE + mcp_queue_tail - mcp_queue_head - 1) % MCP_KEYBOARD_QUEUE_SIZE;
 	
 	if (text_len > available_space) {
 		return false; // Not enough space
 	}
 	
+	// Add characters with bounds checking
 	for (int i = 0; i < text_len; i++) {
 		mcp_keyboard_queue[mcp_queue_head] = text[i];
 		mcp_queue_head = (mcp_queue_head + 1) % MCP_KEYBOARD_QUEUE_SIZE;
+		
+		// Sanity check - should never happen with proper calculation above
+		if (mcp_queue_head == mcp_queue_tail) {
+			// Queue full, this shouldn't happen but handle gracefully
+			return false;
+		}
 	}
 	
 	return true;
@@ -68,8 +87,12 @@ void keyboard_process_mcp_queue(void) {
 	
 	char c = mcp_keyboard_queue_get_next();
 	if (c != 0) {
-		i2c_kbd_buffer_add((uint8_t)c);
-		last_key_inject_time = current_time;
+		// Convert ASCII character to X16 keycode
+		uint8_t keycode = ascii_to_x16_keycode(c);
+		if (keycode != 0) {
+			i2c_kbd_buffer_add(keycode);
+			last_key_inject_time = current_time;
+		}
 	}
 }
 
@@ -90,6 +113,107 @@ void keyboard_add_char(char c) {
 // Add text with proper queuing and timing
 bool keyboard_add_text(const char* text) {
 	return mcp_keyboard_queue_add_text(text);
+}
+
+// Convert ASCII character to X16 keycode with comprehensive support
+static uint8_t ascii_to_x16_keycode(char c) {
+	// Convert lowercase to uppercase (Commodore convention)
+	if (c >= 'a' && c <= 'z') {
+		c = c - 'a' + 'A';
+	}
+	
+	switch (c) {
+		// Letters A-Z (uppercase)
+		case 'A': return 31;
+		case 'B': return 50;
+		case 'C': return 48;
+		case 'D': return 33;
+		case 'E': return 19;
+		case 'F': return 34;
+		case 'G': return 35;
+		case 'H': return 36;
+		case 'I': return 24;
+		case 'J': return 37;
+		case 'K': return 38;
+		case 'L': return 39;
+		case 'M': return 52;
+		case 'N': return 51;
+		case 'O': return 25;
+		case 'P': return 26;
+		case 'Q': return 17;
+		case 'R': return 20;
+		case 'S': return 32;
+		case 'T': return 21;
+		case 'U': return 23;
+		case 'V': return 49;
+		case 'W': return 18;
+		case 'X': return 47;
+		case 'Y': return 22;
+		case 'Z': return 46;
+		
+		// Numbers 0-9
+		case '0': return 11;
+		case '1': return 2;
+		case '2': return 3;
+		case '3': return 4;
+		case '4': return 5;
+		case '5': return 6;
+		case '6': return 7;
+		case '7': return 8;
+		case '8': return 9;
+		case '9': return 10;
+		
+		// Basic punctuation and symbols (directly available)
+		case ' ': return 61;  // Space
+		case '\'': return 41; // Apostrophe/Quote
+		case ',': return 53;  // Comma
+		case '-': return 12;  // Minus/Hyphen
+		case '.': return 54;  // Period
+		case '/': return 55;  // Slash
+		case ';': return 40;  // Semicolon
+		case '=': return 13;  // Equals
+		case '[': return 27;  // Left bracket
+		case '\\': return 29; // Backslash
+		case ']': return 28;  // Right bracket
+		case '`': return 1;   // Grave/backtick
+		
+		// Control characters
+		case '\n': return 43; // Enter/Return (newline)
+		case '\r': return 43; // Enter/Return (carriage return)
+		case '\t': return 16; // Tab
+		case '\b': return 15; // Backspace
+		
+		// Characters that require SHIFT (these are the shifted versions)
+		// Note: X16 keyboard may not support all of these directly
+		// For now, we'll ignore unsupported shifted characters
+		case '!': return 0;   // Shift+1 - not directly mappable
+		case '@': return 0;   // Shift+2 - not directly mappable  
+		case '#': return 0;   // Shift+3 - not directly mappable
+		case '$': return 0;   // Shift+4 - not directly mappable
+		case '%': return 0;   // Shift+5 - not directly mappable
+		case '^': return 0;   // Shift+6 - not directly mappable
+		case '&': return 0;   // Shift+7 - not directly mappable
+		case '*': return 0;   // Shift+8 - not directly mappable
+		case '(': return 0;   // Shift+9 - not directly mappable
+		case ')': return 0;   // Shift+0 - not directly mappable
+		case '_': return 0;   // Shift+- - not directly mappable
+		case '+': return 0;   // Shift+= - not directly mappable
+		case '{': return 0;   // Shift+[ - not directly mappable
+		case '}': return 0;   // Shift+] - not directly mappable
+		case '|': return 0;   // Shift+\ - not directly mappable
+		case ':': return 0;   // Shift+; - not directly mappable
+		case '"': return 0;   // Shift+' - not directly mappable
+		case '<': return 0;   // Shift+, - not directly mappable
+		case '>': return 0;   // Shift+. - not directly mappable
+		case '?': return 0;   // Shift+/ - not directly mappable
+		case '~': return 0;   // Shift+` - not directly mappable
+		
+		// Extended ASCII and other characters - ignore
+		default:
+			// For any character we don't recognize, return 0 (ignore)
+			// This includes extended ASCII (128-255) and other Unicode
+			return 0;
+	}
 }
 
 // Get queue status
