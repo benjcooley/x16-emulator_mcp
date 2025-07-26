@@ -78,10 +78,10 @@ void keyboard_process_mcp_queue(void) {
 		return; // Too soon to inject next character
 	}
 	
-	// Check if keyboard buffer has space (leave some room)
+	// Check if keyboard buffer has space (leave some room for press+release)
 	extern uint8_t kbd_head, kbd_tail;
 	int kbd_used = (16 + kbd_head - kbd_tail) % 16;
-	if (kbd_used > 12) { // Don't fill more than 12/16 slots
+	if (kbd_used > 10) { // Don't fill more than 10/16 slots (need space for press+release)
 		return;
 	}
 	
@@ -90,7 +90,10 @@ void keyboard_process_mcp_queue(void) {
 		// Convert ASCII character to X16 keycode
 		uint8_t keycode = ascii_to_x16_keycode(c);
 		if (keycode != 0) {
+			// Send key press event
 			i2c_kbd_buffer_add(keycode);
+			// Send key release event (set bit 7) - this simulates a complete keypress
+			i2c_kbd_buffer_add(keycode | 0x80);
 			last_key_inject_time = current_time;
 		}
 	}
