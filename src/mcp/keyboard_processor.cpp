@@ -194,11 +194,11 @@ static const std::unordered_map<std::string, MacroAction> macro_map = {
     {"BLUE", {MACRO_KEY, SDL_SCANCODE_7, false, true}},     // CTRL+7
     {"YELLOW", {MACRO_KEY, SDL_SCANCODE_8, false, true}},   // CTRL+8
     
-    // PETSCII symbols (examples - more can be added)
-    {"HEART", {MACRO_KEY, SDL_SCANCODE_S, true, true}},     // SHIFT+CTRL+S
-    {"SPADE", {MACRO_KEY, SDL_SCANCODE_A, true, true}},     // SHIFT+CTRL+A
-    {"CLUB", {MACRO_KEY, SDL_SCANCODE_Z, true, true}},      // SHIFT+CTRL+Z
-    {"DIAMOND", {MACRO_KEY, SDL_SCANCODE_X, true, true}}    // SHIFT+CTRL+X
+    // PETSCII symbols (correct key combinations from PETSCII table)
+    {"HEART", {MACRO_KEY, SDL_SCANCODE_S, true, false}},    // SHIFT+S
+    {"SPADE", {MACRO_KEY, SDL_SCANCODE_K, false, true}},    // COMMODORE+K (C=-K)
+    {"CLUB", {MACRO_KEY, SDL_SCANCODE_X, true, false}},     // SHIFT+X
+    {"DIAMOND", {MACRO_KEY, SDL_SCANCODE_Y, true, false}}   // SHIFT+Y
     
     // Note: Wait/pause macros (_123, _1.5, etc.) are parsed dynamically
 };
@@ -323,9 +323,9 @@ int parse_macro(const std::string& input, size_t start_pos,
             shift_down = action.needs_shift;
         }
         
-        // Handle CTRL key state changes
+        // Handle CTRL key state changes (using LALT for Commodore key)
         if (action.needs_ctrl != ctrl_down) {
-            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LCTRL, action.needs_ctrl ? 1 : 0, next_key_delay);
+            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LALT, action.needs_ctrl ? 1 : 0, next_key_delay);
             next_key_delay = KEY_EVENT_MIN_DELAY_MS;
             ctrl_down = action.needs_ctrl;
         }
@@ -356,6 +356,9 @@ bool translate_ascii_to_events(const std::string& input, InputEventQueue* queue,
     if (!lookup_initialized) {
         init_char_lookup();
     }
+    
+    printf("DEBUG: translate_ascii_to_events called with input: \"%s\"\n", input.c_str());
+    fflush(stdout);
     
     X16_LOG_INFO("Translating ASCII input: \"%s\" (mode: %s)\n", 
                input.c_str(), 
@@ -430,9 +433,9 @@ bool translate_ascii_to_events(const std::string& input, InputEventQueue* queue,
             shift_down = needs_shift;
         }
 
-        // Handle SHIFT key state changes
+        // Handle CTRL key state changes (using LALT for Commodore key)
         if (mapping->needs_ctrl != ctrl_down) {
-            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LCTRL, mapping->needs_ctrl ? 1 : 0, next_key_delay);
+            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LALT, mapping->needs_ctrl ? 1 : 0, next_key_delay);
             total_delay += next_key_delay;
             next_key_delay = KEY_EVENT_MIN_DELAY_MS;
             ctrl_down = mapping->needs_ctrl;
@@ -461,7 +464,7 @@ bool translate_ascii_to_events(const std::string& input, InputEventQueue* queue,
     }
 
     if (ctrl_down) {
-        queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LCTRL, 0, KEY_EVENT_MIN_DELAY_MS);
+        queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LALT, 0, KEY_EVENT_MIN_DELAY_MS);
     }
     
     X16_LOG_INFO("Generated %zu input events for ASCII translation\n", queue->size());
