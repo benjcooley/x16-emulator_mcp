@@ -194,11 +194,11 @@ static const std::unordered_map<std::string, MacroAction> macro_map = {
     {"BLUE", {MACRO_KEY, SDL_SCANCODE_7, false, true}},     // CTRL+7
     {"YELLOW", {MACRO_KEY, SDL_SCANCODE_8, false, true}},   // CTRL+8
     
-    // PETSCII symbols (correct key combinations from PETSCII table)
+    // PETSCII symbols (correct key combinations)
     {"HEART", {MACRO_KEY, SDL_SCANCODE_S, true, false}},    // SHIFT+S
-    {"SPADE", {MACRO_KEY, SDL_SCANCODE_K, false, true}},    // COMMODORE+K (C=-K)
+    {"SPADE", {MACRO_KEY, SDL_SCANCODE_A, true, false}},    // SHIFT+A
     {"CLUB", {MACRO_KEY, SDL_SCANCODE_X, true, false}},     // SHIFT+X
-    {"DIAMOND", {MACRO_KEY, SDL_SCANCODE_Y, true, false}}   // SHIFT+Y
+    {"DIAMOND", {MACRO_KEY, SDL_SCANCODE_Z, true, false}}   // SHIFT+Z
     
     // Note: Wait/pause macros (_123, _1.5, etc.) are parsed dynamically
 };
