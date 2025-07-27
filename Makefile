@@ -17,7 +17,7 @@ else ifeq ($(OS),Windows_NT)
 endif
 
 CFLAGS=-std=c11 -O3 -Wall -Werror -g $(shell $(SDL2CONFIG) --cflags) -Isrc/extern/include
-CXXFLAGS=-std=c++17 -O3 -Wall -Werror -Isrc/extern/ymfm/src
+CXXFLAGS=-std=c++17 -O3 -Wall -Werror $(shell $(SDL2CONFIG) --cflags) -Isrc/extern/ymfm/src -Isrc/extern/include
 LDFLAGS=$(shell $(SDL2CONFIG) --libs) -lm -lz
 
 ifdef ADDL_INCLUDE
