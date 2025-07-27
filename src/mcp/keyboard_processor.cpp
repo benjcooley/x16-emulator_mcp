@@ -68,6 +68,19 @@ struct CharacterMapping {
 // Character mapping table (using correct SDL scancode values)
 static const CharacterMapping char_map[] = {
     // Letters (uppercase by default on X16)
+    {'a', SDL_SCANCODE_A, false, false}, {'b', SDL_SCANCODE_B, false, false}, {'c', SDL_SCANCODE_C, false, false},
+    {'d', SDL_SCANCODE_D, false, false}, {'e', SDL_SCANCODE_E, false, false}, {'f', SDL_SCANCODE_F, false, false},
+    {'g', SDL_SCANCODE_G, false, false}, {'h', SDL_SCANCODE_H, false, false}, {'i', SDL_SCANCODE_I, false, false},
+    {'j', SDL_SCANCODE_J, false, false}, {'k', SDL_SCANCODE_K, false, false}, {'l', SDL_SCANCODE_L, false, false},
+    {'m', SDL_SCANCODE_M, false, false}, {'n', SDL_SCANCODE_N, false, false}, {'o', SDL_SCANCODE_O, false, false},
+    {'p', SDL_SCANCODE_P, false, false}, {'q', SDL_SCANCODE_Q, false, false}, {'r', SDL_SCANCODE_R, false, false},
+    {'s', SDL_SCANCODE_S, false, false}, {'t', SDL_SCANCODE_T, false, false}, {'u', SDL_SCANCODE_U, false, false},
+    {'v', SDL_SCANCODE_V, false, false}, {'w', SDL_SCANCODE_W, false, false}, {'x', SDL_SCANCODE_X, false, false},
+    {'y', SDL_SCANCODE_Y, false, false}, {'z', SDL_SCANCODE_Z, false, false},
+
+    // NOTE: NEEDS SHIFT for upper case letters is calculated on the fly in the keyboard processor
+    // so we can deal with lowercase charset mode and pescii charset mode correctly.
+
     {'A', SDL_SCANCODE_A, false, false}, {'B', SDL_SCANCODE_B, false, false}, {'C', SDL_SCANCODE_C, false, false},
     {'D', SDL_SCANCODE_D, false, false}, {'E', SDL_SCANCODE_E, false, false}, {'F', SDL_SCANCODE_F, false, false},
     {'G', SDL_SCANCODE_G, false, false}, {'H', SDL_SCANCODE_H, false, false}, {'I', SDL_SCANCODE_I, false, false},
@@ -196,8 +209,8 @@ bool translate_ascii_to_events(const std::string& input, InputEventQueue* queue,
         int total_delay = 0;
 
         // Handle SHIFT key state changes
-        bool needs_shift = mapping->needs_shift ||
-            (mode == DisplayMode::ASCII && (c >= 'A' && c <= 'Z')); // ASCII mode uppercase letters need SHIFT
+        bool needs_shift = mapping->needs_shift || 
+            (mode == DisplayMode::ASCII && (c >= 'A' && c <= 'Z'));
         if (needs_shift != shift_down) {
             queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LSHIFT, needs_shift ? 1 : 0, next_key_delay);
             total_delay += next_key_delay;
@@ -245,9 +258,9 @@ bool translate_ascii_to_events(const std::string& input, InputEventQueue* queue,
 
 // Detect current display mode (placeholder - needs implementation)
 DisplayMode detect_display_mode() {
-    // For now, assume ASCII mode
+    // For now, hard code PETSCII mode (X16 default)
     // TODO: Implement actual detection by checking X16 display state
-    return DisplayMode::ASCII;
+    return DisplayMode::PETSCII;
 }
 
 // Timer-based event processor - processes all pending input queues
