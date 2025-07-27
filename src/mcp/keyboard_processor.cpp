@@ -22,14 +22,14 @@ extern "C" {
 
 // Global queue manager for timer-based processing
 static std::vector<InputEventQueue*> g_pending_queues;
-static size_t g_current_queue_index = 0;
 static size_t g_current_event_index = 0;
 static uint32_t g_last_event_time = 0;
+static uint32_t g_elapsed_time = 0;
 static bool g_processing_active = false;
 
-
 // Timing constants (in milliseconds)
-#define KEY_EVENT_MIN_DELAY_MS  1   // Standard delay for each key event (down/up)
+#define KEY_EVENT_MIN_DELAY_MS  5   // Standard delay for each key event (down/up)
+#define KEY_EVENT_UP_DELAY_MS   10  // Maximum delay for key events (to prevent long waits)
 
 // InputEventQueue implementation using std::vector
 InputEventQueue::InputEventQueue(size_t initial_capacity) {
@@ -40,8 +40,8 @@ InputEventQueue::~InputEventQueue() {
     // std::vector handles cleanup automatically
 }
 
-bool InputEventQueue::add_event(uint8_t type, uint8_t code, uint8_t is_down, uint32_t wait_ms) {
-    events.emplace_back(InputEvent{type, code, is_down, wait_ms});
+bool InputEventQueue::add_event(uint8_t type, uint16_t code, uint8_t is_down, uint32_t wait_ms) {
+    events.emplace_back(InputEvent{type, is_down, code, wait_ms});
     return true;
 }
 
@@ -61,7 +61,7 @@ InputEventQueue* create_input_queue(size_t initial_capacity) {
 // ASCII character to SDL scancode mapping
 struct CharacterMapping {
     char ascii_char;
-    uint8_t scancode;
+    uint16_t scancode;
     bool needs_shift;
     bool needs_ctrl;  // For Commodore key combinations
 };
@@ -155,6 +155,7 @@ static const std::unordered_map<std::string, MacroAction> macro_map = {
     {"ESC", {MACRO_KEY, SDL_SCANCODE_ESCAPE, false, false}},
     {"SPACE", {MACRO_KEY, SDL_SCANCODE_SPACE, false, false}},
     {"BACKSPACE", {MACRO_KEY, SDL_SCANCODE_BACKSPACE, false, false}},
+    {"BS", {MACRO_KEY, SDL_SCANCODE_BACKSPACE, false, false}},
     {"DELETE", {MACRO_KEY, SDL_SCANCODE_DELETE, false, false}},
     {"DEL", {MACRO_KEY, SDL_SCANCODE_DELETE, false, false}},
     
@@ -234,7 +235,7 @@ static void init_char_lookup() {
 // Parse macro from input string starting at given position
 // Returns number of characters consumed (not including delimiters)
 int parse_macro(const std::string& input, size_t start_pos, 
-                InputEventQueue* queue, int& next_key_delay,
+                InputEventQueue* queue, int typing_rate_ms,
                 bool& shift_down, bool& ctrl_down) {
     if (start_pos >= input.length()) {
         return 0;
@@ -293,8 +294,7 @@ int parse_macro(const std::string& input, size_t start_pos,
         }
         
         // Add wait event
-        queue->add_event(INPUT_TYPE_WAIT, 0, 0, next_key_delay + wait_ms);
-        next_key_delay = KEY_EVENT_MIN_DELAY_MS;
+        queue->add_event(INPUT_TYPE_WAIT, 0, 0, wait_ms);
         
         X16_LOG_DEBUG("Added dynamic WAIT event: %dms (from '%s')\n", wait_ms, macro_name.c_str());
         return end_pos - start_pos;
@@ -311,32 +311,27 @@ int parse_macro(const std::string& input, size_t start_pos,
     
     if (action.type == MACRO_WAIT) {
         // Add wait event
-        queue->add_event(INPUT_TYPE_WAIT, 0, 0, next_key_delay + action.value);
-        next_key_delay = KEY_EVENT_MIN_DELAY_MS;
+        queue->add_event(INPUT_TYPE_WAIT, 0, 0, action.value);
         
         X16_LOG_DEBUG("Added WAIT event: %dms\n", action.value);
     } else if (action.type == MACRO_KEY) {
         // Handle SHIFT key state changes
         if (action.needs_shift != shift_down) {
-            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LSHIFT, action.needs_shift ? 1 : 0, next_key_delay);
-            next_key_delay = KEY_EVENT_MIN_DELAY_MS;
+            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LSHIFT, action.needs_shift ? 1 : 0, KEY_EVENT_MIN_DELAY_MS);
             shift_down = action.needs_shift;
         }
         
         // Handle CTRL key state changes (using LALT for Commodore key)
         if (action.needs_ctrl != ctrl_down) {
-            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LALT, action.needs_ctrl ? 1 : 0, next_key_delay);
-            next_key_delay = KEY_EVENT_MIN_DELAY_MS;
+            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LALT, action.needs_ctrl ? 1 : 0, KEY_EVENT_MIN_DELAY_MS);
             ctrl_down = action.needs_ctrl;
         }
         
         // Add key press
-        queue->add_event(INPUT_TYPE_KEYBOARD, action.value, 1, next_key_delay);
-        next_key_delay = KEY_EVENT_MIN_DELAY_MS;
+        queue->add_event(INPUT_TYPE_KEYBOARD, action.value, 1, typing_rate_ms);
         
         // Add key release
-        queue->add_event(INPUT_TYPE_KEYBOARD, action.value, 0, next_key_delay);
-        next_key_delay = KEY_EVENT_MIN_DELAY_MS;
+        queue->add_event(INPUT_TYPE_KEYBOARD, action.value, 0, KEY_EVENT_UP_DELAY_MS);
         
         X16_LOG_DEBUG("Added key macro: scancode=%d, shift=%d, ctrl=%d\n", 
                      action.value, action.needs_shift, action.needs_ctrl);
@@ -367,7 +362,6 @@ bool translate_ascii_to_events(const std::string& input, InputEventQueue* queue,
     // Timing algorithm state
     bool shift_down = false;
     bool ctrl_down = false;
-    int next_key_delay = 0;
     
     for (size_t i = 0; i < input.length(); i++) {
         char c = input[i];
@@ -382,7 +376,7 @@ bool translate_ascii_to_events(const std::string& input, InputEventQueue* queue,
             }
             
             // Parse macro
-            int consumed = parse_macro(input, i, queue, next_key_delay, shift_down, ctrl_down);
+            int consumed = parse_macro(input, i, queue, typing_rate_ms, shift_down, ctrl_down);
             if (consumed > 0) {
                 i += consumed - 1;  // -1 because loop will increment
                 
@@ -399,7 +393,9 @@ bool translate_ascii_to_events(const std::string& input, InputEventQueue* queue,
         }
         
         // Handle escape sequences
-        if (c == '\\' && i + 1 < input.length()) {
+        // NOTE: JSON will convert /n to actual newline octet codes so do not think this
+        // is needed here. Don't care about tab.
+        /*if (c == '\\' && i + 1 < input.length()) {
             char next = input[i + 1];
             if (next == 'n') {
                 c = '\n';  // Newline
@@ -409,53 +405,36 @@ bool translate_ascii_to_events(const std::string& input, InputEventQueue* queue,
                 c = '\t';
                 i++;
             }
-        }
+        }*/
         
         // Direct inline lookup - no function call overhead
         unsigned char uc = (unsigned char)c;
         if (uc >= 128 || char_lookup[uc].scancode == 0) {
-            X16_LOG_WARN("WARNING: No mapping found for character '%c' (0x%02X)\n", c, (unsigned char)c);
+            //X16_LOG_WARN("WARNING: No mapping found for character '%c' (0x%02X)\n", c, (unsigned char)c);
             continue;
         }
         
         const CharacterMapping* mapping = &char_lookup[uc];
         
-        int start_delay = next_key_delay;  // Save initial delay for this character
-        int total_delay = 0;
-
         // Handle SHIFT key state changes
         bool needs_shift = mapping->needs_shift || 
             (mode == DisplayMode::ASCII && (c >= 'A' && c <= 'Z'));
         if (needs_shift != shift_down) {
-            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LSHIFT, needs_shift ? 1 : 0, next_key_delay);
-            total_delay += next_key_delay;
-            next_key_delay = KEY_EVENT_MIN_DELAY_MS;  // First event for this char has no delay
+            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LSHIFT, needs_shift ? 1 : 0, KEY_EVENT_MIN_DELAY_MS);
             shift_down = needs_shift;
         }
 
         // Handle CTRL key state changes (using LALT for Commodore key)
         if (mapping->needs_ctrl != ctrl_down) {
-            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LALT, mapping->needs_ctrl ? 1 : 0, next_key_delay);
-            total_delay += next_key_delay;
-            next_key_delay = KEY_EVENT_MIN_DELAY_MS;
+            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LALT, mapping->needs_ctrl ? 1 : 0, KEY_EVENT_MIN_DELAY_MS);
             ctrl_down = mapping->needs_ctrl;
         }
         
         // Add the main key press (DOWN)
-        queue->add_event(INPUT_TYPE_KEYBOARD, mapping->scancode, 1, next_key_delay);
-        total_delay += next_key_delay;
-        next_key_delay = KEY_EVENT_MIN_DELAY_MS; 
+        queue->add_event(INPUT_TYPE_KEYBOARD, mapping->scancode, 1, typing_rate_ms);
         
         // Add the main key release (UP)
-        queue->add_event(INPUT_TYPE_KEYBOARD, mapping->scancode, 0, next_key_delay);
-        total_delay += next_key_delay;
-        next_key_delay = KEY_EVENT_MIN_DELAY_MS;
-        
-        // Calculate delay for next character
-        next_key_delay = typing_rate_ms - (total_delay - start_delay);
-        if (next_key_delay < KEY_EVENT_MIN_DELAY_MS) {
-            next_key_delay = KEY_EVENT_MIN_DELAY_MS;  // Ensure minimum delay
-        }
+        queue->add_event(INPUT_TYPE_KEYBOARD, mapping->scancode, 0, KEY_EVENT_UP_DELAY_MS);
     }
     
     // Release any remaining modifier keys at the end
@@ -479,85 +458,56 @@ DisplayMode detect_display_mode() {
 }
 
 // Timer-based event processor - processes all pending input queues
-extern "C" void process_input_event_queues() {
+extern "C" void process_input_event_queues() {    
     if (!g_processing_active || g_pending_queues.empty()) {
         return;
     }
-    
+
     uint32_t current_time = SDL_GetTicks();
-    uint32_t elapsed_time = current_time - g_last_event_time;
+    g_elapsed_time += current_time - g_last_event_time;
+    g_last_event_time = current_time;
     
     // Process current queue
-    while (g_current_queue_index < g_pending_queues.size()) {
-        InputEventQueue* current_queue = g_pending_queues[g_current_queue_index];
+    while (!g_pending_queues.empty()) {
+
+        InputEventQueue* current_queue = g_pending_queues[0];
         
         // Process all events in current queue whose wait time has elapsed
-        bool processed_any = false;
-        while (g_current_event_index < current_queue->size()) {
+        for (;;) {
+
+            if (g_current_event_index >= current_queue->size()) {
+                g_pending_queues.erase(g_pending_queues.begin());
+                delete current_queue;
+                g_current_event_index = 0;
+                break; // Move to next queue
+            }
+
             const InputEvent& event = (*current_queue)[g_current_event_index];
             
-            if (elapsed_time < event.wait_ms) {
+            if (g_elapsed_time < event.wait_ms) {
                 // Not enough time has passed for this event
-                break;
+                return;
             }
+
+            g_elapsed_time -= event.wait_ms; // Deduct elapsed time
             
             // Process this event
             if (event.type == INPUT_TYPE_KEYBOARD) {
                 // Send keyboard event directly to emulator
                 handle_keyboard(event.is_down != 0, 0, (SDL_Scancode)event.code);
-                
-                X16_LOG_DEBUG("Processed keyboard event: scancode=%d, down=%d, wait=%dms\n", 
-                           event.code, event.is_down, event.wait_ms);
             } else if (event.type == INPUT_TYPE_JOYSTICK) {
                 // TODO: Handle joystick events when implemented
-                X16_LOG_DEBUG("Joystick event processing not yet implemented\n");
             } else if (event.type == INPUT_TYPE_WAIT) {
                 // WAIT events don't perform any action, just consume time
-                X16_LOG_DEBUG("Processed WAIT event: %dms\n", event.wait_ms);
             }
             
             // Move to next event
             g_current_event_index++;
-            processed_any = true;
-            
-            // Update timing for next event
-            g_last_event_time = current_time;
-            elapsed_time = 0; // Reset for next event in same frame
         }
-        
-        // Check if current queue is finished
-        if (g_current_event_index >= current_queue->size()) {
-            // Queue is complete - clean it up and move to next
-            X16_LOG_INFO("Completed processing queue %zu with %zu events\n", 
-                       g_current_queue_index, current_queue->size());
-            
-            delete current_queue;
-            g_current_queue_index++;
-            g_current_event_index = 0;
-            
-            // Continue processing next queue in same frame if available
-            continue;
-        }
-        
-        // If we processed any events, we're done for this frame
-        if (processed_any) {
-            break;
-        }
-        
-        // No events were ready, wait for next frame
-        break;
     }
-    
-    // Check if all queues are processed
-    if (g_current_queue_index >= g_pending_queues.size()) {
-        // All queues processed - reset state
-        g_pending_queues.clear();
-        g_current_queue_index = 0;
-        g_current_event_index = 0;
-        g_processing_active = false;
-        
-        X16_LOG_INFO("All input queues processed - system idle\n");
-    }
+
+    g_processing_active = false; // No more queues to process
+    X16_LOG_INFO("All input queues processed\n");
 }
 
 // Submit input queue to the processing system
@@ -573,10 +523,10 @@ void submit_input_queue(InputEventQueue* queue) {
     g_pending_queues.push_back(queue);
     
     // Start processing if not already active
-    if (!g_processing_active) {
+    if (!g_processing_active || g_pending_queues.size() == 1) {
         g_processing_active = true;
-        g_current_queue_index = 0;
         g_current_event_index = 0;
+        g_elapsed_time = 0;
         g_last_event_time = SDL_GetTicks();
         
         X16_LOG_INFO("Started input queue processing system\n");
