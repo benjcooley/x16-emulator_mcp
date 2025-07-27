@@ -69,6 +69,10 @@ static char mcp_keyboard_queue_get_next(void) {
 
 // Process MCP keyboard queue with timing (call this from main loop)
 void keyboard_process_mcp_queue(void) {
+	// First, process the new timer-based input event queues
+	process_input_event_queues();
+	
+	// Then process the legacy character-based queue for backward compatibility
 	if (!mcp_keyboard_queue_has_data()) {
 		return;
 	}
