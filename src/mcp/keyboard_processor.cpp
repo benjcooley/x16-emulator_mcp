@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <vector>
+#include <unordered_map>
 #include <SDL.h>
 
 // Include C headers with proper linkage
@@ -130,6 +131,78 @@ static const CharacterMapping char_map[] = {
 
 static const size_t char_map_size = sizeof(char_map) / sizeof(char_map[0]);
 
+// Macro action types
+enum MacroActionType {
+    MACRO_KEY,    // Regular key press/release
+    MACRO_WAIT    // Wait/pause
+};
+
+// Macro action structure
+struct MacroAction {
+    MacroActionType type;
+    uint32_t value;      // SDL scancode for MACRO_KEY, milliseconds for MACRO_WAIT
+    bool needs_shift;
+    bool needs_ctrl;
+};
+
+// Macro lookup table
+static const std::unordered_map<std::string, MacroAction> macro_map = {
+    // Special keys
+    {"ENTER", {MACRO_KEY, SDL_SCANCODE_RETURN, false, false}},
+    {"RETURN", {MACRO_KEY, SDL_SCANCODE_RETURN, false, false}},
+    {"TAB", {MACRO_KEY, SDL_SCANCODE_TAB, false, false}},
+    {"ESCAPE", {MACRO_KEY, SDL_SCANCODE_ESCAPE, false, false}},
+    {"ESC", {MACRO_KEY, SDL_SCANCODE_ESCAPE, false, false}},
+    {"SPACE", {MACRO_KEY, SDL_SCANCODE_SPACE, false, false}},
+    {"BACKSPACE", {MACRO_KEY, SDL_SCANCODE_BACKSPACE, false, false}},
+    {"DELETE", {MACRO_KEY, SDL_SCANCODE_DELETE, false, false}},
+    {"DEL", {MACRO_KEY, SDL_SCANCODE_DELETE, false, false}},
+    
+    // Arrow keys
+    {"UP", {MACRO_KEY, SDL_SCANCODE_UP, false, false}},
+    {"DOWN", {MACRO_KEY, SDL_SCANCODE_DOWN, false, false}},
+    {"LEFT", {MACRO_KEY, SDL_SCANCODE_LEFT, false, false}},
+    {"RIGHT", {MACRO_KEY, SDL_SCANCODE_RIGHT, false, false}},
+    {"CRSR-UP", {MACRO_KEY, SDL_SCANCODE_UP, false, false}},
+    {"CRSR-DOWN", {MACRO_KEY, SDL_SCANCODE_DOWN, false, false}},
+    {"CRSR-LEFT", {MACRO_KEY, SDL_SCANCODE_LEFT, false, false}},
+    {"CRSR-RIGHT", {MACRO_KEY, SDL_SCANCODE_RIGHT, false, false}},
+    
+    // Function keys
+    {"F1", {MACRO_KEY, SDL_SCANCODE_F1, false, false}},
+    {"F2", {MACRO_KEY, SDL_SCANCODE_F2, false, false}},
+    {"F3", {MACRO_KEY, SDL_SCANCODE_F3, false, false}},
+    {"F4", {MACRO_KEY, SDL_SCANCODE_F4, false, false}},
+    {"F5", {MACRO_KEY, SDL_SCANCODE_F5, false, false}},
+    {"F6", {MACRO_KEY, SDL_SCANCODE_F6, false, false}},
+    {"F7", {MACRO_KEY, SDL_SCANCODE_F7, false, false}},
+    {"F8", {MACRO_KEY, SDL_SCANCODE_F8, false, false}},
+    
+    // Home/End/Page keys
+    {"HOME", {MACRO_KEY, SDL_SCANCODE_HOME, false, false}},
+    {"END", {MACRO_KEY, SDL_SCANCODE_END, false, false}},
+    {"CLR", {MACRO_KEY, SDL_SCANCODE_HOME, true, false}},  // SHIFT+HOME for clear screen
+    {"INST-DEL", {MACRO_KEY, SDL_SCANCODE_BACKSPACE, false, false}},
+    
+    // PETSCII color codes (using CTRL combinations)
+    {"BLACK", {MACRO_KEY, SDL_SCANCODE_2, false, true}},    // CTRL+2
+    {"WHITE", {MACRO_KEY, SDL_SCANCODE_9, false, true}},    // CTRL+9
+    {"RED", {MACRO_KEY, SDL_SCANCODE_3, false, true}},      // CTRL+3
+    {"CYAN", {MACRO_KEY, SDL_SCANCODE_4, false, true}},     // CTRL+4
+    {"PURPLE", {MACRO_KEY, SDL_SCANCODE_5, false, true}},   // CTRL+5
+    {"GREEN", {MACRO_KEY, SDL_SCANCODE_6, false, true}},    // CTRL+6
+    {"BLUE", {MACRO_KEY, SDL_SCANCODE_7, false, true}},     // CTRL+7
+    {"YELLOW", {MACRO_KEY, SDL_SCANCODE_8, false, true}},   // CTRL+8
+    
+    // PETSCII symbols (examples - more can be added)
+    {"HEART", {MACRO_KEY, SDL_SCANCODE_S, true, true}},     // SHIFT+CTRL+S
+    {"SPADE", {MACRO_KEY, SDL_SCANCODE_A, true, true}},     // SHIFT+CTRL+A
+    {"CLUB", {MACRO_KEY, SDL_SCANCODE_Z, true, true}},      // SHIFT+CTRL+Z
+    {"DIAMOND", {MACRO_KEY, SDL_SCANCODE_X, true, true}}    // SHIFT+CTRL+X
+    
+    // Note: Wait/pause macros (_123, _1.5, etc.) are parsed dynamically
+};
+
 // Direct lookup table for O(1) character mapping
 static CharacterMapping char_lookup[128];
 static bool lookup_initialized = false;
@@ -158,6 +231,119 @@ static void init_char_lookup() {
     lookup_initialized = true;
 }
 
+// Parse macro from input string starting at given position
+// Returns number of characters consumed (not including delimiters)
+int parse_macro(const std::string& input, size_t start_pos, 
+                InputEventQueue* queue, int& next_key_delay,
+                bool& shift_down, bool& ctrl_down) {
+    if (start_pos >= input.length()) {
+        return 0;
+    }
+    
+    // Find the end of the macro (invalid characters for macro names)
+    size_t end_pos = start_pos;
+    while (end_pos < input.length()) {
+        char c = input[end_pos];
+        // Valid macro characters: letters, numbers, underscore, hyphen, period
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || 
+              (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.')) {
+            break;
+        }
+        end_pos++;
+    }
+    
+    if (end_pos == start_pos) {
+        // No valid macro characters found
+        return 0;
+    }
+    
+    // Extract macro name
+    std::string macro_name = input.substr(start_pos, end_pos - start_pos);
+    
+    // Convert to uppercase for lookup
+    for (char& c : macro_name) {
+        if (c >= 'a' && c <= 'z') {
+            c = c - 'a' + 'A';
+        }
+    }
+    
+    X16_LOG_DEBUG("Parsing macro: '%s'\n", macro_name.c_str());
+    
+    // Check for dynamic wait macro (starts with underscore)
+    if (macro_name.length() > 1 && macro_name[0] == '_') {
+        std::string time_str = macro_name.substr(1);  // Remove the underscore
+        
+        // Parse the numeric value
+        char* endptr;
+        double time_value = strtod(time_str.c_str(), &endptr);
+        
+        if (endptr == time_str.c_str() || time_value < 0) {
+            X16_LOG_WARN("WARNING: Invalid wait time in macro '%s'\n", macro_name.c_str());
+            return end_pos - start_pos;
+        }
+        
+        // Convert to milliseconds
+        uint32_t wait_ms;
+        if (time_str.find('.') != std::string::npos) {
+            // Decimal value - treat as seconds, convert to milliseconds
+            wait_ms = (uint32_t)(time_value * 1000.0);
+        } else {
+            // Integer value - treat as milliseconds
+            wait_ms = (uint32_t)time_value;
+        }
+        
+        // Add wait event
+        queue->add_event(INPUT_TYPE_WAIT, 0, 0, next_key_delay + wait_ms);
+        next_key_delay = KEY_EVENT_MIN_DELAY_MS;
+        
+        X16_LOG_DEBUG("Added dynamic WAIT event: %dms (from '%s')\n", wait_ms, macro_name.c_str());
+        return end_pos - start_pos;
+    }
+    
+    // Look up macro in static table
+    auto it = macro_map.find(macro_name);
+    if (it == macro_map.end()) {
+        X16_LOG_WARN("WARNING: Unknown macro '%s'\n", macro_name.c_str());
+        return end_pos - start_pos;  // Consume the characters anyway
+    }
+    
+    const MacroAction& action = it->second;
+    
+    if (action.type == MACRO_WAIT) {
+        // Add wait event
+        queue->add_event(INPUT_TYPE_WAIT, 0, 0, next_key_delay + action.value);
+        next_key_delay = KEY_EVENT_MIN_DELAY_MS;
+        
+        X16_LOG_DEBUG("Added WAIT event: %dms\n", action.value);
+    } else if (action.type == MACRO_KEY) {
+        // Handle SHIFT key state changes
+        if (action.needs_shift != shift_down) {
+            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LSHIFT, action.needs_shift ? 1 : 0, next_key_delay);
+            next_key_delay = KEY_EVENT_MIN_DELAY_MS;
+            shift_down = action.needs_shift;
+        }
+        
+        // Handle CTRL key state changes
+        if (action.needs_ctrl != ctrl_down) {
+            queue->add_event(INPUT_TYPE_KEYBOARD, SDL_SCANCODE_LCTRL, action.needs_ctrl ? 1 : 0, next_key_delay);
+            next_key_delay = KEY_EVENT_MIN_DELAY_MS;
+            ctrl_down = action.needs_ctrl;
+        }
+        
+        // Add key press
+        queue->add_event(INPUT_TYPE_KEYBOARD, action.value, 1, next_key_delay);
+        next_key_delay = KEY_EVENT_MIN_DELAY_MS;
+        
+        // Add key release
+        queue->add_event(INPUT_TYPE_KEYBOARD, action.value, 0, next_key_delay);
+        next_key_delay = KEY_EVENT_MIN_DELAY_MS;
+        
+        X16_LOG_DEBUG("Added key macro: scancode=%d, shift=%d, ctrl=%d\n", 
+                     action.value, action.needs_shift, action.needs_ctrl);
+    }
+    
+    return end_pos - start_pos;
+}
 
 // Translate ASCII string to input events using proper timing algorithm
 bool translate_ascii_to_events(const std::string& input, InputEventQueue* queue, int typing_rate_ms, DisplayMode mode) {
@@ -182,6 +368,32 @@ bool translate_ascii_to_events(const std::string& input, InputEventQueue* queue,
     
     for (size_t i = 0; i < input.length(); i++) {
         char c = input[i];
+        
+        // Handle backtick-delimited macros
+        if (c == '`') {
+            // Skip opening backtick
+            i++;
+            if (i >= input.length()) {
+                X16_LOG_WARN("WARNING: Unterminated macro at end of input\n");
+                break;
+            }
+            
+            // Parse macro
+            int consumed = parse_macro(input, i, queue, next_key_delay, shift_down, ctrl_down);
+            if (consumed > 0) {
+                i += consumed - 1;  // -1 because loop will increment
+                
+                // Look for closing backtick
+                if (i + 1 < input.length() && input[i + 1] == '`') {
+                    i++;  // Skip closing backtick
+                } else {
+                    X16_LOG_WARN("WARNING: Missing closing backtick for macro\n");
+                }
+            } else {
+                X16_LOG_WARN("WARNING: Empty or invalid macro\n");
+            }
+            continue;
+        }
         
         // Handle escape sequences
         if (c == '\\' && i + 1 < input.length()) {
@@ -296,6 +508,9 @@ extern "C" void process_input_event_queues() {
             } else if (event.type == INPUT_TYPE_JOYSTICK) {
                 // TODO: Handle joystick events when implemented
                 X16_LOG_DEBUG("Joystick event processing not yet implemented\n");
+            } else if (event.type == INPUT_TYPE_WAIT) {
+                // WAIT events don't perform any action, just consume time
+                X16_LOG_DEBUG("Processed WAIT event: %dms\n", event.wait_ms);
             }
             
             // Move to next event
