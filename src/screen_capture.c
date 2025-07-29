@@ -69,7 +69,7 @@ screen_capture_options_t screen_capture_default_options(void) {
         .layer = -1,              // Auto-detect active layer
         .include_colors = false,
         .include_cursor = false,
-        .format_borders = true,
+        .format_borders = false,  // Pure text output by default
         .convert_petscii = true   // Enable PETSCII conversion by default
     };
     return options;
@@ -156,8 +156,12 @@ screen_capture_result_t screen_capture_text_advanced(const screen_capture_option
             output_buffer[buffer_pos++] = '|';
         }
         
+        // Build the line content first in a temporary buffer
+        char line_content[256]; // Temporary buffer for the line
+        size_t line_pos = 0;
+        
         // Process each column in the row
-        for (uint32_t col = 0; col < width; col++) {
+        for (uint32_t col = 0; col < width && line_pos < sizeof(line_content) - 1; col++) {
             uint32_t buffer_index = (row * width + col) * 2;
             uint8_t char_code = 0;
             
@@ -179,10 +183,19 @@ screen_capture_result_t screen_capture_text_advanced(const screen_capture_option
                 }
             }
             
-            // Add character to output buffer
-            if (buffer_pos < estimated_size - 1) {
-                output_buffer[buffer_pos++] = converted_char;
-            }
+            line_content[line_pos++] = converted_char;
+        }
+        line_content[line_pos] = '\0';
+        
+        // Trim trailing spaces from the line
+        while (line_pos > 0 && line_content[line_pos - 1] == ' ') {
+            line_pos--;
+        }
+        line_content[line_pos] = '\0';
+        
+        // Add the trimmed line to output buffer
+        for (size_t i = 0; i < line_pos && buffer_pos < estimated_size - 1; i++) {
+            output_buffer[buffer_pos++] = line_content[i];
         }
         
         if (options->format_borders) {
