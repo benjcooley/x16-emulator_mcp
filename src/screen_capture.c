@@ -125,37 +125,12 @@ screen_capture_result_t screen_capture_text_advanced(const screen_capture_option
     result.height = height;
     result.active_layer = actual_layer;
     
-    // Allocate output buffer
-    size_t estimated_size = width * height + 1024; // Text + formatting overhead
-    char* output_buffer = malloc(estimated_size);
-    if (!output_buffer) {
-        free(raw_buffer);
-        result.success = false;
-        result.error_message = strdup("Output buffer allocation failed");
-        return result;
-    }
-    
-    size_t buffer_pos = 0;
-    
-    // Add header if borders are enabled
-    if (options->format_borders) {
-        int header_len = snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos,
-                                "Text Screen Layer %d (%dx%d):\n", result.active_layer, width, height);
-        buffer_pos += header_len;
-        
-        // Add top border
-        for (uint32_t i = 0; i < width + 2; i++) {
-            output_buffer[buffer_pos++] = '-';
-        }
-        output_buffer[buffer_pos++] = '\n';
-    }
+    // First pass: collect all lines in an array
+    char lines[60][256]; // Max 60 lines, 256 chars each
+    uint32_t line_count = 0;
     
     // Process each row of the screen
     for (uint32_t row = 0; row < height; row++) {
-        if (options->format_borders) {
-            output_buffer[buffer_pos++] = '|';
-        }
-        
         // Build the line content first in a temporary buffer
         char line_content[256]; // Temporary buffer for the line
         size_t line_pos = 0;
@@ -170,19 +145,8 @@ screen_capture_result_t screen_capture_text_advanced(const screen_capture_option
                 char_code = raw_buffer[buffer_index];
             }
             
-            // Convert character based on options
-            char converted_char;
-            if (options->convert_petscii) {
-                converted_char = convert_petscii_to_ascii(char_code);
-            } else {
-                // Simple sanitization for JSON safety
-                if (char_code >= 32 && char_code <= 127) {
-                    converted_char = (char)char_code;
-                } else {
-                    converted_char = '.';
-                }
-            }
-            
+            // Convert character based on options (always use PETSCII conversion)
+            char converted_char = convert_petscii_to_ascii(char_code);
             line_content[line_pos++] = converted_char;
         }
         line_content[line_pos] = '\0';
@@ -193,31 +157,62 @@ screen_capture_result_t screen_capture_text_advanced(const screen_capture_option
         }
         line_content[line_pos] = '\0';
         
-        // Add the trimmed line to output buffer
-        for (size_t i = 0; i < line_pos && buffer_pos < estimated_size - 1; i++) {
-            output_buffer[buffer_pos++] = line_content[i];
-        }
+        // Store the line
+        strncpy(lines[line_count], line_content, sizeof(lines[line_count]) - 1);
+        lines[line_count][sizeof(lines[line_count]) - 1] = '\0';
+        line_count++;
+    }
+    
+    // Trim empty lines from the end
+    while (line_count > 0 && strlen(lines[line_count - 1]) == 0) {
+        line_count--;
+    }
+    
+    // Calculate output buffer size for JSON array
+    size_t estimated_size = 1024; // Base size for JSON structure
+    for (uint32_t i = 0; i < line_count; i++) {
+        estimated_size += strlen(lines[i]) + 10; // Line content + JSON overhead per line
+    }
+    
+    char* output_buffer = malloc(estimated_size);
+    if (!output_buffer) {
+        free(raw_buffer);
+        result.success = false;
+        result.error_message = strdup("Output buffer allocation failed");
+        return result;
+    }
+    
+    size_t buffer_pos = 0;
+    
+    // Build JSON array format
+    buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos, "[\n");
+    
+    for (uint32_t i = 0; i < line_count; i++) {
+        // Escape quotes and backslashes in the line content
+        char escaped_line[512];
+        size_t escaped_pos = 0;
+        const char* line = lines[i];
         
-        if (options->format_borders) {
-            output_buffer[buffer_pos++] = '|';
-        }
-        output_buffer[buffer_pos++] = '\n';
-    }
-    
-    // Add bottom border if enabled
-    if (options->format_borders) {
-        for (uint32_t i = 0; i < width + 2; i++) {
-            if (buffer_pos < estimated_size - 1) {
-                output_buffer[buffer_pos++] = '-';
+        for (size_t j = 0; line[j] && escaped_pos < sizeof(escaped_line) - 2; j++) {
+            if (line[j] == '"' || line[j] == '\\') {
+                escaped_line[escaped_pos++] = '\\';
             }
+            escaped_line[escaped_pos++] = line[j];
         }
-        if (buffer_pos < estimated_size - 1) {
-            output_buffer[buffer_pos++] = '\n';
+        escaped_line[escaped_pos] = '\0';
+        
+        // Add the line to JSON array
+        buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos,
+                              "  \"%s\"", escaped_line);
+        
+        // Add comma if not the last line
+        if (i < line_count - 1) {
+            buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos, ",");
         }
+        buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos, "\n");
     }
     
-    // Null terminate
-    output_buffer[buffer_pos] = '\0';
+    buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos, "]");
     
     // Clean up raw buffer
     free(raw_buffer);
