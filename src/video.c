@@ -901,6 +901,75 @@ render_layer_line_text(uint8_t layer, uint16_t y)
 	}
 }
 
+bool
+capture_text_buffer(uint8_t *buffer, size_t buf_size, int32_t layer, uint32_t *out_width, uint32_t *out_height, int32_t *out_layer)
+{
+	// Find active text layer
+	*out_layer = layer;
+	if (*out_layer < 0){
+		for (int l = 0; l < 2; l++) {
+			if (layer_properties[l].text_mode) {
+				layer = *out_layer = l;
+				break;
+			}
+		}
+	}
+	
+	if (layer == -1) {
+		log_error("capture_text_buffer: No text layer active");
+		return false;
+	}
+
+	X16_LOG_INFO("capture_text_buffer: Capturing text buffer for layer %d", layer);
+
+	X16_LOG_INFO("capture_text_buffer: Layer %d properties: color_depth=%d, map_base=0x%04x, tile_base=0x%04x, text_mode=%d, text_mode_256c=%d, tile_mode=%d, bitmap_mode=%d",
+		layer,
+		layer_properties[layer].color_depth,
+		layer_properties[layer].map_base,
+		layer_properties[layer].tile_base,
+		layer_properties[layer].text_mode,
+		layer_properties[layer].text_mode_256c,
+		layer_properties[layer].tile_mode,
+		layer_properties[layer].bitmap_mode);
+
+	// Process only the active text layer
+	const struct video_layer_properties *props = &layer_properties[layer];
+
+	// Calculate screen dimensions based on character size
+	uint32_t char_width = 1 << props->tilew_log2;
+	uint32_t width = *out_width = SCREEN_WIDTH / char_width;
+	uint32_t char_height = 1 << props->tileh_log2;
+	uint32_t height = *out_height = SCREEN_HEIGHT / char_height;
+
+	X16_LOG_INFO("capture_text_buffer: Calculated dimensions: %dx%d characters (char size: %dx%d pixels)", 
+		*out_width, *out_height, char_width, char_height);
+
+	uint32_t required_size = (*out_width) * (*out_height) * 2;
+	X16_LOG_INFO("capture_text_buffer: Required buffer size: %u, provided: %zu", required_size, buf_size);
+
+	if (buf_size < required_size) {
+		log_error("capture_text_buffer: Buffer size is too small - need %u, got %zu", required_size, buf_size);
+		return false;
+	}
+
+	uint32_t text_line_stride = 1 << props->mapw_log2;
+	X16_LOG_INFO("capture_text_buffer: Text line stride: %u", text_line_stride);
+	
+	uint8_t *out_buffer = buffer;
+	uint8_t *text_buffer = video_ram + props->map_base;
+
+	for (uint32_t y = 0; y < height; ++y) {
+		for (uint32_t x = 0; x < width * 2; x += 2) {
+			*(out_buffer++) = text_buffer[x];     // Character
+			*(out_buffer++) = text_buffer[x + 1]; // Color attributes
+		}
+		text_buffer += text_line_stride * 2; // Move to the next line (stride is in characters, multiply by 2 for bytes)
+	}
+
+	X16_LOG_INFO("capture_text_buffer: Successfully captured %dx%d text buffer", *out_width, *out_height);
+	return true;
+}
+
 static void
 render_layer_line_tile(uint8_t layer, uint16_t y)
 {
@@ -1308,7 +1377,7 @@ video_step(float mhz, float steps, bool midline)
 			if (!ntsc_mode) {
 				new_frame = true;
 				frame_count++;
-			}
+	}
 		}
 		if (!ntsc_mode) {
 			update_isr_and_coll(vga_scan_pos_y - VGA_Y_OFFSET, irq_line);
