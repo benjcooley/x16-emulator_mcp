@@ -78,14 +78,22 @@ screen_capture_options_t screen_capture_default_options(void) {
 // Free result structure
 void screen_capture_free_result(screen_capture_result_t* result) {
     if (result) {
-        if (result->text_data) {
-            free(result->text_data);
-            result->text_data = NULL;
+        if (result->lines) {
+            // Free each individual line string
+            for (int i = 0; i < result->line_count; i++) {
+                if (result->lines[i]) {
+                    free(result->lines[i]);
+                }
+            }
+            // Free the array of pointers
+            free(result->lines);
+            result->lines = NULL;
         }
         if (result->error_message) {
             free(result->error_message);
             result->error_message = NULL;
         }
+        result->line_count = 0;
     }
 }
 
@@ -125,8 +133,8 @@ screen_capture_result_t screen_capture_text_advanced(const screen_capture_option
     result.height = height;
     result.active_layer = actual_layer;
     
-    // First pass: collect all lines in an array
-    char lines[60][256]; // Max 60 lines, 256 chars each
+    // First pass: collect all lines in a temporary array
+    char temp_lines[60][256]; // Max 60 lines, 256 chars each
     uint32_t line_count = 0;
     
     // Process each row of the screen
@@ -158,74 +166,46 @@ screen_capture_result_t screen_capture_text_advanced(const screen_capture_option
         line_content[line_pos] = '\0';
         
         // Store the line
-        strncpy(lines[line_count], line_content, sizeof(lines[line_count]) - 1);
-        lines[line_count][sizeof(lines[line_count]) - 1] = '\0';
+        strncpy(temp_lines[line_count], line_content, sizeof(temp_lines[line_count]) - 1);
+        temp_lines[line_count][sizeof(temp_lines[line_count]) - 1] = '\0';
         line_count++;
     }
     
     // Trim empty lines from the end
-    while (line_count > 0 && strlen(lines[line_count - 1]) == 0) {
+    while (line_count > 0 && strlen(temp_lines[line_count - 1]) == 0) {
         line_count--;
     }
-    
-    // Calculate output buffer size for JSON array
-    size_t estimated_size = 1024; // Base size for JSON structure
-    for (uint32_t i = 0; i < line_count; i++) {
-        estimated_size += strlen(lines[i]) + 10; // Line content + JSON overhead per line
-    }
-    
-    char* output_buffer = malloc(estimated_size);
-    if (!output_buffer) {
-        free(raw_buffer);
-        result.success = false;
-        result.error_message = strdup("Output buffer allocation failed");
-        return result;
-    }
-    
-    size_t buffer_pos = 0;
-    
-    // Build JSON object format with numbered line keys
-    buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos, "{\n");
-    
-    for (uint32_t i = 0; i < line_count; i++) {
-        // Escape quotes and backslashes in the line content
-        char escaped_line[512];
-        size_t escaped_pos = 0;
-        const char* line = lines[i];
-        
-        for (size_t j = 0; line[j] && escaped_pos < sizeof(escaped_line) - 2; j++) {
-            if (line[j] == '"' || line[j] == '\\') {
-                escaped_line[escaped_pos++] = '\\';
-            }
-            escaped_line[escaped_pos++] = line[j];
-        }
-        escaped_line[escaped_pos] = '\0';
-        
-        // Add the line to JSON object with zero-padded line number as key
-        buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos,
-                              "  \"%02u\": \"%s\"", i, escaped_line);
-        
-        // Add comma if not the last line
-        if (i < line_count - 1) {
-            buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos, ",");
-        }
-        buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos, "\n");
-    }
-    
-    buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos, "}");
     
     // Clean up raw buffer
     free(raw_buffer);
     
-    // Resize output buffer to actual size
-    char* final_buffer = realloc(output_buffer, buffer_pos + 1);
-    if (final_buffer) {
-        output_buffer = final_buffer;
+    // Allocate array of string pointers
+    result.lines = malloc(line_count * sizeof(char*));
+    if (!result.lines) {
+        result.success = false;
+        result.error_message = strdup("Failed to allocate lines array");
+        return result;
     }
     
-    result.text_data = output_buffer;
-    result.success = true;
+    // Allocate and copy each line string
+    result.line_count = line_count;
+    for (uint32_t i = 0; i < line_count; i++) {
+        result.lines[i] = strdup(temp_lines[i]);
+        if (!result.lines[i]) {
+            // Clean up on failure
+            for (uint32_t j = 0; j < i; j++) {
+                free(result.lines[j]);
+            }
+            free(result.lines);
+            result.lines = NULL;
+            result.line_count = 0;
+            result.success = false;
+            result.error_message = strdup("Failed to allocate line string");
+            return result;
+        }
+    }
     
+    result.success = true;
     return result;
 }
 
@@ -234,11 +214,27 @@ char* screen_capture_text(void) {
     screen_capture_options_t options = screen_capture_default_options();
     screen_capture_result_t result = screen_capture_text_advanced(&options);
     
-    if (result.success) {
-        char* text = result.text_data;
-        result.text_data = NULL; // Transfer ownership
+    if (result.success && result.lines && result.line_count > 0) {
+        // Build a simple concatenated string from all lines
+        size_t total_length = 0;
+        for (int i = 0; i < result.line_count; i++) {
+            total_length += strlen(result.lines[i]) + 1; // +1 for newline
+        }
+        total_length += 1; // +1 for null terminator
+        
+        char* text = malloc(total_length);
+        if (text) {
+            text[0] = '\0';
+            for (int i = 0; i < result.line_count; i++) {
+                strcat(text, result.lines[i]);
+                if (i < result.line_count - 1) {
+                    strcat(text, "\n");
+                }
+            }
+        }
+        
         screen_capture_free_result(&result);
-        return text;
+        return text ? text : strdup("Error: Memory allocation failed");
     } else {
         screen_capture_free_result(&result);
         return strdup("Error: No text mode active or capture failed");
