@@ -41,5 +41,6 @@ uint8_t video_get_dc_value(uint8_t reg);
 // Screenshot functionality for MCP
 bool video_take_screenshot(void);
 const char* get_last_screenshot_filename(void);
+bool capture_text_buffer(uint8_t *buffer, size_t buf_size, int32_t layer, uint32_t *out_width, uint32_t *out_height, int32_t *out_layer);
 
 #endif

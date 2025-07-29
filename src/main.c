@@ -46,6 +46,7 @@
 #include "mcp/mcp_server.h"
 #include "keyboard.h"
 #include "logging.h"
+#include "asm_logging.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -358,6 +359,10 @@ machine_reset()
 	i2c_reset_state();
 	ieee_init();
 	memory_reset();
+	
+	// Reset assembly logging system on NMI reset
+	asm_logging_reset();
+	
 	vera_spi_init();
 	via1_init();
 	if (has_via2) {
@@ -1345,6 +1350,9 @@ main(int argc, char **argv)
 	wav_recorder_set_path(wav_path);
 
 	memory_init();
+	
+	// Initialize assembly logging system
+	asm_logging_init();
 
 	joystick_init();
 

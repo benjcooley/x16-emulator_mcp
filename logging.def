@@ -1,0 +1,19 @@
+{
+  "info": {
+    "1": "System initialized",
+    "2": "Loading data from address %3",
+    "3": "Player position: X=%1, Y=%2",
+    "4": "Score updated to %3",
+    "5": "Level %1 completed"
+  },
+  "warning": {
+    "1": "Low memory warning: %1 bytes remaining",
+    "2": "Invalid input detected: %1",
+    "3": "Collision detected at %1, %2"
+  },
+  "error": {
+    "1": "Memory allocation failed",
+    "2": "Invalid address access: %3",
+    "3": "System error code %1"
+  }
+}

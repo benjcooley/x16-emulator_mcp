@@ -19,6 +19,7 @@
 #include "cartridge.h"
 #include "iso_8859_15.h"
 #include "midi.h"
+#include "asm_logging.h"
 
 uint8_t ram_bank;
 uint8_t rom_bank;
@@ -236,6 +237,9 @@ real_read6502(uint16_t address, uint8_t bank, bool debugOn, int16_t x16Bank)
 				return YM_read_status();
 			}
 			return 0x9f; // open bus read
+		} else if (address >= 0x9f60 && address < 0x9f65) {
+			// assembly logging system
+			return asm_logging_read_handler(address, debugOn);
 		} else if (address >= 0x9fb0 && address < 0x9fc0) {
 			// emulator state
 			return emu_read(address & 0xf, debugOn);
@@ -327,6 +331,9 @@ write6502(uint16_t address, uint8_t bank, uint8_t value)
 				audio_render();
 				YM_write_reg(addr_ym, value);
 			}
+		} else if (address >= 0x9f60 && address < 0x9f65) {
+			// assembly logging system
+			asm_logging_write_handler(address, value);
 		} else if (address >= 0x9fb0 && address < 0x9fc0) {
 			// emulator state
 			emu_write(address & 0xf, value);
