@@ -184,8 +184,8 @@ screen_capture_result_t screen_capture_text_advanced(const screen_capture_option
     
     size_t buffer_pos = 0;
     
-    // Build JSON array format
-    buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos, "[\n");
+    // Build JSON object format with numbered line keys
+    buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos, "{\n");
     
     for (uint32_t i = 0; i < line_count; i++) {
         // Escape quotes and backslashes in the line content
@@ -201,9 +201,9 @@ screen_capture_result_t screen_capture_text_advanced(const screen_capture_option
         }
         escaped_line[escaped_pos] = '\0';
         
-        // Add the line to JSON array
+        // Add the line to JSON object with zero-padded line number as key
         buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos,
-                              "  \"%s\"", escaped_line);
+                              "  \"%02u\": \"%s\"", i, escaped_line);
         
         // Add comma if not the last line
         if (i < line_count - 1) {
@@ -212,7 +212,7 @@ screen_capture_result_t screen_capture_text_advanced(const screen_capture_option
         buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos, "\n");
     }
     
-    buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos, "]");
+    buffer_pos += snprintf(output_buffer + buffer_pos, estimated_size - buffer_pos, "}");
     
     // Clean up raw buffer
     free(raw_buffer);
