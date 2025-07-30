@@ -47,6 +47,12 @@ logs/
 # Test files and recordings
 test_*.gif
 test_*.png
+test_*.log
+test_*.txt
+test_*.prg
+
+# Logging def file
+
 
 # Resources directory (screenshots, etc.)
 resources/
