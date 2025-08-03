@@ -52,7 +52,7 @@ test_*.txt
 test_*.prg
 
 # Logging def file
-
+logging.def
 
 # Resources directory (screenshots, etc.)
 resources/
