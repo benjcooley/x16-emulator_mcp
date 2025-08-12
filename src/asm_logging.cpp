@@ -66,8 +66,54 @@ void asm_logging_cleanup(void) {
 }
 
 bool asm_logging_load_definitions(void) {
-    // Use fixed filename in current directory
-    const char* ldf_path = "logging.def";
+    // Get the prg_path from main.c
+    extern char *prg_path;
+    
+    char ldf_path[512];
+    bool found_logging_file = false;
+    
+    // If we have a prg_path, try to construct game-specific logging filename
+    if (prg_path && strlen(prg_path) > 0) {
+        // Extract basename from prg_path (remove directory and .prg extension)
+        const char* basename = strrchr(prg_path, '/');
+        if (!basename) {
+            basename = strrchr(prg_path, '\\'); // Windows path separator
+        }
+        if (basename) {
+            basename++; // Skip the separator
+        } else {
+            basename = prg_path; // No path separator found
+        }
+        
+        // Create game-specific logging filename: basename + "log.def"
+        // e.g., "pacman.prg" -> "pacmanlog.def"
+        strncpy(ldf_path, basename, sizeof(ldf_path) - 1);
+        ldf_path[sizeof(ldf_path) - 1] = '\0';
+        
+        // Remove .prg extension if present
+        char* dot = strrchr(ldf_path, '.');
+        if (dot && strcmp(dot, ".prg") == 0) {
+            *dot = '\0';
+        }
+        
+        // Append "log.def"
+        strncat(ldf_path, "log.def", sizeof(ldf_path) - strlen(ldf_path) - 1);
+        
+        X16_LOG_INFO("ASM Logging: Trying game-specific logging file: %s", ldf_path);
+        
+        // Try to load the game-specific log definition file
+        SDL_RWops* file = SDL_RWFromFile(ldf_path, "r");
+        if (file) {
+            SDL_RWclose(file);
+            found_logging_file = true;
+        }
+    }
+    
+    // If no game-specific file found, fall back to generic logging.def
+    if (!found_logging_file) {
+        strcpy(ldf_path, "logging.def");
+        X16_LOG_INFO("ASM Logging: Falling back to generic logging file: %s", ldf_path);
+    }
     
     // Try to load the log definition file
     SDL_RWops* file = SDL_RWFromFile(ldf_path, "r");
@@ -130,6 +176,9 @@ void asm_logging_write_handler(uint16_t address, uint8_t value) {
     if (!asm_logging_enabled) {
         return;
     }
+    
+    // Debug: Log all write attempts to assembly logging addresses
+    X16_LOG_INFO("ASM Logging: Write to address $%04X, value $%02X", address, value);
     
     switch (address) {
         case ASM_LOG_PARAM1_ADDR:

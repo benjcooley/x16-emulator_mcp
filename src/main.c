@@ -153,6 +153,7 @@ SDL_RWops *prg_file;
 bool prg_finished_loading;
 int prg_override_start = -1;
 bool run_after_load = false;
+char *prg_path = NULL;  // Global variable for logging system access
 
 char *nvram_path = NULL;
 
@@ -640,7 +641,6 @@ main(int argc, char **argv)
 	char rom_path_data[PATH_MAX];
 
 	char *rom_path = rom_path_data;
-	char *prg_path = NULL;
 	char *bas_path = NULL;
 	char *sf2_path = NULL;
 	char *sdcard_path = NULL;
@@ -714,7 +714,7 @@ main(int argc, char **argv)
 			if (!argc || argv[0][0] == '-') {
 				usage();
 			}
-			prg_path = argv[0];
+			prg_path = strdup(argv[0]);  // Create persistent copy for logging system
 			argc--;
 			argv++;
 		} else if (!strcmp(argv[0], "-midicard")) {

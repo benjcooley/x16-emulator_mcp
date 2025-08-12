@@ -49,4 +49,7 @@ void asm_logging_emit_log(asm_log_level_t level, uint8_t message_id);
 extern asm_log_params_t asm_log_params;
 extern bool asm_logging_enabled;
 
+// External dependencies
+extern char *prg_path;  // From main.c - program path for auto-detection
+
 #endif // _ASM_LOGGING_H_
